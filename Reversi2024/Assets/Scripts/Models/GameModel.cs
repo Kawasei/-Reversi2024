@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using Cysharp.Threading.Tasks;
 using R3;
@@ -16,6 +17,7 @@ namespace Reversi2024.Model
         private int turn = 1;
         private List<IPlayer> players = new List<IPlayer>();
         private Vector2Int? selectedPosition;
+        private bool isSelectedPosition = false;
         private ReactiveProperty<Dictionary<Vector2Int,ulong>> currentEnablePutAndResult = new ReactiveProperty<Dictionary<Vector2Int, ulong>>();
         private ReactiveProperty<ulong> currentEnablePutsBit = new ReactiveProperty<ulong>();
         private List<HistoryModel> histories = new List<HistoryModel>();
@@ -63,7 +65,11 @@ namespace Reversi2024.Model
             this.players = players;
             foreach (var player in this.players)
             {
-                player.OnSelectedPutPosition.Subscribe(pos => selectedPosition = pos).AddTo(compositeDisposable);
+                player.OnSelectedPutPosition.Subscribe(pos =>
+                {
+                    selectedPosition = pos;
+                    isSelectedPosition = true;
+                }).AddTo(compositeDisposable);
                 player.ShouldShowLoading.Subscribe(x => shouldShowLoadingSubject.OnNext(x)).AddTo(compositeDisposable);
             }
             
@@ -76,6 +82,7 @@ namespace Reversi2024.Model
         {
             cancellationTokenSource?.Dispose();
             cancellationTokenSource = null;
+            onEndGameSubject.OnNext(Unit.Default);
         }
 
         public void Reset()
@@ -96,29 +103,36 @@ namespace Reversi2024.Model
                 Debug.Log("Start Game");
                 while (true)
                 {
-                    selectedPosition = null;
+                    if (boardModel.BlackCount + boardModel.WhiteCount >= 64)
+                    {
+                        //全部置かれてたら終わり
+                        EndGame();
+                        return;
+                    }
+                    isSelectedPosition = false;
                     var putBeforeBoard = new ValueTuple<ulong,ulong>(boardModel.BoardData.Item1, boardModel.BoardData.Item2);
                     
                     currentEnablePutAndResult.Value =
                         await boardModel.CalculateEnablePutAndResultAsync(isBlackTurn.Value, cancellationToken);
                    
                     this.players[isBlackTurn.Value ? 0 : 1 ].StartThinking(isBlackTurn.Value, boardModel);
-                    await UniTask.WaitWhile(() => !selectedPosition.HasValue, PlayerLoopTiming.Update,
-                        cancellationTokenSource.Token);
-                    if ((selectedPosition.HasValue && (currentEnablePutsBit.Value & Utility.ConvertPosition(selectedPosition.Value)) == 0) ||
-                        (!selectedPosition.HasValue && currentEnablePutsBit.Value > 0))
-                    {
-                        //不正なポジションにおかれたのでやり直し
-                        continue;
-                    }
+                    await UniTask.WaitWhile(() => !isSelectedPosition, PlayerLoopTiming.Update,cancellationTokenSource.Token);
 
                     if (!selectedPosition.HasValue)
                     {
                         //パスの時
+                        var lastHistory = histories.LastOrDefault();
+                        if (lastHistory is { PutPosition: null })
+                        {
+                            // 両方パスの時は終わり
+                            EndGame();
+                            return;
+                        }
                         ChangeTurn(null, putBeforeBoard);
                         continue;
                     }
 
+                    //通常通り石が置けたとき
                     boardModel.PutStone(selectedPosition.Value, isBlackTurn.Value);
                     ChangeTurn(selectedPosition.Value, putBeforeBoard);
                 }
@@ -134,7 +148,7 @@ namespace Reversi2024.Model
 
         private void ChangeTurn(Vector2Int? putPosition, ValueTuple<ulong, ulong> beforePutBoardData)
         {
-            AddHistory(turn, isBlackTurn.Value, putPosition.Value, beforePutBoardData);
+            AddHistory(turn, isBlackTurn.Value, putPosition, beforePutBoardData);
             isBlackTurn.Value = !isBlackTurn.Value;
             turn++;
         }
