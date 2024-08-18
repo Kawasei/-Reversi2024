@@ -29,6 +29,12 @@ namespace Reversi2024.Model.Player
         private async UniTask ThinkingTask(bool isBlackTurn, BoardModel boardModel)
         {
             var enablePuts = (await boardModel.CalculateEnablePutAndResultAsync(isBlackTurn)).Keys;
+            if (enablePuts.Count == 0)
+            {
+                onSelectPosSubject.OnNext(null);
+                Debug.Log("人間ターン終了(パス)");
+                return;
+            }
             while (true)
             {
                 if (selectedCellPos.HasValue)

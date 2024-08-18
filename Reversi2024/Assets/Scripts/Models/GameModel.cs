@@ -101,31 +101,25 @@ namespace Reversi2024.Model
                     
                     currentEnablePutAndResult.Value =
                         await boardModel.CalculateEnablePutAndResultAsync(isBlackTurn.Value, cancellationToken);
-                    if (currentEnablePutAndResult.Value == null)
-                    {
-                        if (isPassed)
-                        {
-                            onEndGameSubject.OnNext(Unit.Default);
-                            break;
-                        }
-
-                        isPassed = true;
-                        ChangeTurn(null, putBeforeBoard);
-                        continue;
-                    }
-
+                   
                     this.players[isBlackTurn.Value ? 0 : 1 ].StartThinking(isBlackTurn.Value, boardModel);
                     await UniTask.WaitWhile(() => !selectedPosition.HasValue, PlayerLoopTiming.Update,
                         cancellationTokenSource.Token);
-                    if (!selectedPosition.HasValue ||
-                        (currentEnablePutsBit.Value & Utility.ConvertPosition(selectedPosition.Value)) == 0)
+                    if ((selectedPosition.HasValue && (currentEnablePutsBit.Value & Utility.ConvertPosition(selectedPosition.Value)) == 0) ||
+                        (!selectedPosition.HasValue && currentEnablePutsBit.Value > 0))
                     {
                         //不正なポジションにおかれたのでやり直し
                         continue;
                     }
 
+                    if (!selectedPosition.HasValue)
+                    {
+                        //パスの時
+                        ChangeTurn(null, putBeforeBoard);
+                        continue;
+                    }
+
                     boardModel.PutStone(selectedPosition.Value, isBlackTurn.Value);
-                    isPassed = false;
                     ChangeTurn(selectedPosition.Value, putBeforeBoard);
                 }
 
