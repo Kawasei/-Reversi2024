@@ -10,14 +10,18 @@ namespace Reversi2024.Model
     public class BoardModel : IDisposable
     {
         private ReactiveProperty<ValueTuple<ulong, ulong>> boardData = new ReactiveProperty<(ulong, ulong)>();
+
+        private CompositeDisposable compositeDisposable = new CompositeDisposable();
+        
+        
         public ValueTuple<ulong, ulong> BoardData => boardData.Value;
         public Observable<ValueTuple<ulong, ulong>> OnChangedBoard => boardData;
 
-        private ReactiveProperty<ValueTuple<int, int>> count = new ReactiveProperty<(int, int)>();
-        public ValueTuple<int, int> Count => count.Value;
-        public Observable<ValueTuple<int, int>> OnChangedCount => count;
-
-        private CompositeDisposable compositeDisposable = new CompositeDisposable();
+        private ReactiveProperty<ValueTuple<int, int>> counter = new ReactiveProperty<(int, int)>();
+        public ValueTuple<int, int> Counter => counter.Value;
+        public Observable<ValueTuple<int, int>> OnChangedCounter => counter;
+        public int BlackCount => counter.Value.Item1;
+        public int WhiteCount => counter.Value.Item2;
         
         public BoardModel()
         {
@@ -169,25 +173,25 @@ namespace Reversi2024.Model
 
         private void UpdateCount()
         {
-            ValueTuple<int, int> counter = new ValueTuple<int, int>(0, 0);
+            ValueTuple<int, int> count = new ValueTuple<int, int>(0, 0);
             for (int y = 0; y < 8; y++)
             {
                 for (int x = 0; x < 8; x++)
                 {
                     ulong bit = Utility.ConvertPosition(x, y);
-                    counter.Item1 += (boardData.Value.Item1 & bit) != 0 ? 1 : 0;
-                    counter.Item2 += (boardData.Value.Item2 & bit) != 0 ? 1 : 0;
+                    count.Item1 += (boardData.Value.Item1 & bit) != 0 ? 1 : 0;
+                    count.Item2 += (boardData.Value.Item2 & bit) != 0 ? 1 : 0;
                 }
             }
 
-            Debug.Log($"Update Count Black : {counter.Item1} White: {counter.Item2}");
-            count.Value = counter;
+            Debug.Log($"Update Count Black : {count.Item1} White: {count.Item2}");
+            counter.Value = count;
         }
 
         public void Dispose()
         {
             boardData?.Dispose();
-            count?.Dispose();
+            counter?.Dispose();
             compositeDisposable?.Dispose();
         }
     }

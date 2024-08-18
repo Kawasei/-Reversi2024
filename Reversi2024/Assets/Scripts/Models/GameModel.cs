@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading;
 using Cysharp.Threading.Tasks;
 using R3;
+using Reversi2024.Model.Player;
 using UnityEngine;
 
 namespace Reversi2024.Model
@@ -10,27 +11,32 @@ namespace Reversi2024.Model
     public class GameModel : IDisposable
     {
         private BoardModel boardModel = new BoardModel();
-        
-        private bool isBlackTurn = true;
+
+        private ReactiveProperty<bool> isBlackTurn = new ReactiveProperty<bool>(true);
         private int turn = 1;
-        private bool[] cpuPlayer = new bool[2];
-        private bool isCpuTurn = false;
+        private List<IPlayer> players = new List<IPlayer>();
+        private Vector2Int? selectedPosition;
         private ReactiveProperty<Dictionary<Vector2Int,ulong>> currentEnablePutAndResult = new ReactiveProperty<Dictionary<Vector2Int, ulong>>();
         private ReactiveProperty<ulong> currentEnablePutsBit = new ReactiveProperty<ulong>();
-
-        private Vector2Int? putPosition;
+        private List<HistoryModel> histories = new List<HistoryModel>();
+        private Subject<List<HistoryModel>> historiesModifiedSubject = new Subject<List<HistoryModel>>();
+        private Subject<Unit> onEndGameSubject = new Subject<Unit>();
+        private Subject<bool> shouldShowLoadingSubject = new Subject<bool>();
         
         private CancellationTokenSource cancellationTokenSource = null;
         private CompositeDisposable compositeDisposable = new CompositeDisposable();
         
         public BoardModel BoardModel => boardModel;
         public Observable<ValueTuple<ulong, ulong>> OnChangedBoard => boardModel.OnChangedBoard;
+        public Observable<ValueTuple<int, int>> OnChangedCounter => boardModel.OnChangedCounter;
         public Observable<ulong> OnChangedEnablePut => currentEnablePutsBit;
+        public Observable<bool> IsBlackTurnObservable => isBlackTurn;
+        public Observable<List<HistoryModel>> HistoriesObservable => historiesModifiedSubject;
+        public Observable<Unit> OnEndGame => onEndGameSubject;
+        public Observable<bool> ShouldShowLoading => shouldShowLoadingSubject;
         
-        public GameModel(bool isBlackCpu,bool isWhiteCpu)
+        public GameModel()
         {
-            cpuPlayer[0] = isBlackCpu;
-            cpuPlayer[1] = isWhiteCpu;
             currentEnablePutAndResult.Subscribe(val =>
             {
                 ulong bit = 0;
@@ -45,9 +51,22 @@ namespace Reversi2024.Model
                 currentEnablePutsBit.Value = bit;
             }).AddTo(compositeDisposable);
         }
-
-        public void StartGame()
+        
+        public void StartGame(List<IPlayer> players)
         {
+            foreach (var player in this.players)
+            {
+                player.Dispose();
+            }
+            this.players.Clear();
+            
+            this.players = players;
+            foreach (var player in this.players)
+            {
+                player.OnSelectedPutPosition.Subscribe(pos => selectedPosition = pos).AddTo(compositeDisposable);
+                player.ShouldShowLoading.Subscribe(x => shouldShowLoadingSubject.OnNext(x)).AddTo(compositeDisposable);
+            }
+            
             Reset();
             cancellationTokenSource = new CancellationTokenSource();
             MainLoop(cancellationTokenSource.Token).Forget();
@@ -62,24 +81,11 @@ namespace Reversi2024.Model
         public void Reset()
         {
             boardModel.Reset();
-            isBlackTurn = true;
-            currentEnablePutAndResult.Value = boardModel.CalculateEnablePutAndResult(isBlackTurn);
+            isBlackTurn.Value = true;
+            currentEnablePutAndResult.Value = boardModel.CalculateEnablePutAndResult(isBlackTurn.Value);
+            histories = new List<HistoryModel>();
+            historiesModifiedSubject.OnNext(histories);
             turn = 1;
-        }
-
-        public void PutPositionByUI(Vector2Int pos)
-        {
-            if (isCpuTurn)
-            {
-                return;
-            }
-            
-            PutPosition(pos);
-        }
-
-        public void PutPosition(Vector2Int pos)
-        {
-            putPosition = pos;
         }
 
         private async UniTask MainLoop(CancellationToken cancellationToken)
@@ -90,49 +96,59 @@ namespace Reversi2024.Model
                 Debug.Log("Start Game");
                 while (true)
                 {
-                    putPosition = null;
-                    isCpuTurn = cpuPlayer[isBlackTurn ? 0 : 1];
-
-
+                    selectedPosition = null;
+                    var putBeforeBoard = new ValueTuple<ulong,ulong>(boardModel.BoardData.Item1, boardModel.BoardData.Item2);
+                    
                     currentEnablePutAndResult.Value =
-                        await boardModel.CalculateEnablePutAndResultAsync(isBlackTurn, cancellationToken);
+                        await boardModel.CalculateEnablePutAndResultAsync(isBlackTurn.Value, cancellationToken);
                     if (currentEnablePutAndResult.Value == null)
                     {
                         if (isPassed)
                         {
-                            //両方パスなので終了処理
+                            onEndGameSubject.OnNext(Unit.Default);
                             break;
                         }
 
                         isPassed = true;
-                        //TODO 履歴保存
-                        isBlackTurn = !isBlackTurn;
-                        turn++;
+                        ChangeTurn(null, putBeforeBoard);
                         continue;
                     }
 
-
-                    await UniTask.WaitWhile(() => !putPosition.HasValue, PlayerLoopTiming.Update,
+                    this.players[isBlackTurn.Value ? 0 : 1 ].StartThinking(isBlackTurn.Value, boardModel);
+                    await UniTask.WaitWhile(() => !selectedPosition.HasValue, PlayerLoopTiming.Update,
                         cancellationTokenSource.Token);
-                    if (!putPosition.HasValue ||
-                        (currentEnablePutsBit.Value & Utility.ConvertPosition(putPosition.Value)) == 0)
+                    if (!selectedPosition.HasValue ||
+                        (currentEnablePutsBit.Value & Utility.ConvertPosition(selectedPosition.Value)) == 0)
                     {
                         //不正なポジションにおかれたのでやり直し
                         continue;
                     }
 
-                    boardModel.PutStone(putPosition.Value, isBlackTurn);
-                    //TODO 履歴の保存
-                    isBlackTurn = !isBlackTurn;
-                    turn++;
+                    boardModel.PutStone(selectedPosition.Value, isBlackTurn.Value);
+                    isPassed = false;
+                    ChangeTurn(selectedPosition.Value, putBeforeBoard);
                 }
 
-                //TODO 終了処理
+                onEndGameSubject.OnNext(Unit.Default);
                 Debug.Log("End Game");
             }catch (OperationCanceledException)
             {
                 Debug.Log("ゲームはキャンセルされました");
+                Reset();
             }
+        }
+
+        private void ChangeTurn(Vector2Int? putPosition, ValueTuple<ulong, ulong> beforePutBoardData)
+        {
+            AddHistory(turn, isBlackTurn.Value, putPosition.Value, beforePutBoardData);
+            isBlackTurn.Value = !isBlackTurn.Value;
+            turn++;
+        }
+
+        private void AddHistory(int turn, bool isBlackTurn, Vector2Int? putPosition, ValueTuple<ulong, ulong> beforePutBoardData)
+        {
+            histories.Insert(0,new HistoryModel(turn, isBlackTurn, putPosition, beforePutBoardData));
+            historiesModifiedSubject.OnNext(histories);
         }
 
         public void Dispose()
