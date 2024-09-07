@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading;
 using Cysharp.Threading.Tasks;
 using R3;
+using Unity.VisualScripting;
 using UnityEngine;
 
 namespace Reversi2024.Model
@@ -10,22 +11,39 @@ namespace Reversi2024.Model
     public class BoardModel : IDisposable
     {
         private ReactiveProperty<ValueTuple<ulong, ulong>> boardData = new ReactiveProperty<(ulong, ulong)>();
-
+        private ReactiveProperty<ValueTuple<int, int>> counter = new ReactiveProperty<(int, int)>();
         private CompositeDisposable compositeDisposable = new CompositeDisposable();
         
         
         public ValueTuple<ulong, ulong> BoardData => boardData.Value;
         public Observable<ValueTuple<ulong, ulong>> OnChangedBoard => boardData;
-
-        private ReactiveProperty<ValueTuple<int, int>> counter = new ReactiveProperty<(int, int)>();
+        
         public ValueTuple<int, int> Counter => counter.Value;
         public Observable<ValueTuple<int, int>> OnChangedCounter => counter;
         public int BlackCount => counter.Value.Item1;
         public int WhiteCount => counter.Value.Item2;
+
+        private readonly int[,] evaluationParams = new int[,]
+        {
+            { 5, -3, 4, 2, 2, 4, -3, 5 },
+            {-3, -3, 2,-1,-1, 2, -3,-3 },
+            { 4,  2, 2, 1, 1, 2,  2, 4 },
+            { 2, -1, 1, 1, 1, 1, -1, 2 },
+            { 2, -1, 1, 1, 1, 1, -1, 2 },
+            { 4,  2, 2, 1, 1, 2, -2, 4 },
+            {-3, -3, 2,-1,-1, 2, -3,-3 },
+            { 5, -3, 4, 2, 2, 4, -3, 5 },
+        };
         
         public BoardModel()
         {
             OnChangedBoard.Subscribe(val => UpdateCount()).AddTo(compositeDisposable);
+        }
+
+        public void Copy(BoardModel boardModel)
+        {
+            boardData = new ReactiveProperty<(ulong, ulong)>(boardModel.boardData.Value);
+            counter = new ReactiveProperty<(int, int)>(counter.Value);
         }
 
         public void Reset()
@@ -59,7 +77,6 @@ namespace Reversi2024.Model
             Dictionary<Vector2Int, ulong> result = null;
             try
             {
-                await UniTask.SwitchToThreadPool();
                 try
                 {
                     await UniTask.SwitchToThreadPool();
@@ -183,9 +200,29 @@ namespace Reversi2024.Model
                     count.Item2 += (boardData.Value.Item2 & bit) != 0 ? 1 : 0;
                 }
             }
-
-            Debug.Log($"Update Count Black : {count.Item1} White: {count.Item2}");
+            
             counter.Value = count;
+        }
+
+        public ValueTuple<int, int> GetEvaluationValue()
+        {
+            var res = new ValueTuple<int, int>(0,0);
+            for (int x = 0; x < 8; x++)
+            {
+                for (int y = 0; y < 8; y++)
+                {
+                    if ((boardData.Value.Item1 & (ulong)(1 << (x * y * 8))) > 0)
+                    {
+                        res.Item1 += evaluationParams[x, y];
+                    }
+                    if ((boardData.Value.Item2 & (ulong)(1 << (x * y * 8))) > 0)
+                    {
+                        res.Item2 += evaluationParams[x, y];
+                    }
+                }
+            }
+
+            return res;
         }
 
         public void Dispose()

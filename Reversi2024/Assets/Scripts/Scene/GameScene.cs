@@ -65,6 +65,8 @@ namespace Reversi2024.Scene
                     {
                         GameSettingModel.PlayerTypes.Human => new HumanPlayer(),
                         GameSettingModel.PlayerTypes.CPU_weak => new CpuWeakPlayer(),
+                        GameSettingModel.PlayerTypes.CPU_middle => new CpuMiddlePlayer(),
+                        GameSettingModel.PlayerTypes.CPU_strong => new CpuStrongPlayer(),
                         _ => new HumanPlayer()
                     };
                     cellHandler.OnClickObservable.Subscribe(pos => player.ClickedCell(pos))
